@@ -23,17 +23,17 @@
 import os
 from math import ceil
 from time import time
+from typing import List
 
 import numpy as np
 
-byte_depth_to_dtype = {1: np.uint8, 2: np.uint16, 4: np.uint32, 8: np.uint64}
 
-
-def roundup(x, base=1):
+def roundup(x: float, base: int = 1) -> int:
     return int(ceil(x / base)) * base
 
 
-def lsb_interleave_bytes(carrier, payload, num_lsb, truncate=False, byte_depth=1):
+def lsb_interleave_bytes(carrier: bytes, payload: bytes, num_lsb: int, truncate: bool = False,
+                         byte_depth: int = 1) -> bytes:
     """
     Interleave the bytes of payload into the num_lsb LSBs of carrier.
 
@@ -47,27 +47,20 @@ def lsb_interleave_bytes(carrier, payload, num_lsb, truncate=False, byte_depth=1
 
     plen = len(payload)
     payload_bits = np.zeros(shape=(plen, 8), dtype=np.uint8)
-    payload_bits[:plen, :] = np.unpackbits(
-        np.frombuffer(payload, dtype=np.uint8, count=plen)
-    ).reshape(plen, 8)
+    payload_bits[:plen, :] = np.unpackbits(np.frombuffer(payload, dtype=np.uint8, count=plen)).reshape(plen, 8)
 
     bit_height = roundup(plen * 8 / num_lsb)
     payload_bits.resize(bit_height * num_lsb)
 
-    carrier_dtype = byte_depth_to_dtype[byte_depth]
-    carrier_bits = np.unpackbits(
-        np.frombuffer(carrier, dtype=carrier_dtype, count=bit_height).view(np.uint8)
-    ).reshape(bit_height, 8 * byte_depth)
-
-    carrier_bits[:, 8 * byte_depth - num_lsb: 8 * byte_depth] = payload_bits.reshape(
-        bit_height, num_lsb
-    )
+    carrier_bits = np.unpackbits(np.frombuffer(carrier, dtype=np.uint8, count=byte_depth * bit_height)
+                                 ).reshape(bit_height, 8 * byte_depth)
+    carrier_bits[:, 8 * byte_depth - num_lsb: 8 * byte_depth] = payload_bits.reshape(bit_height, num_lsb)
 
     ret = np.packbits(carrier_bits).tobytes()
     return ret if truncate else ret + carrier[byte_depth * bit_height:]
 
 
-def lsb_deinterleave_bytes(carrier, num_bits, num_lsb, byte_depth=1):
+def lsb_deinterleave_bytes(carrier: bytes, num_bits: int, num_lsb: int, byte_depth: int = 1) -> bytes:
     """
     Deinterleave num_bits bits from the num_lsb LSBs of carrier.
 
@@ -79,14 +72,12 @@ def lsb_deinterleave_bytes(carrier, num_bits, num_lsb, byte_depth=1):
     """
 
     plen = roundup(num_bits / num_lsb)
-    carrier_dtype = byte_depth_to_dtype[byte_depth]
-    payload_bits = np.unpackbits(
-        np.frombuffer(carrier, dtype=carrier_dtype, count=plen).view(np.uint8)
-    ).reshape(plen, 8 * byte_depth)[:, 8 * byte_depth - num_lsb: 8 * byte_depth]
+    payload_bits = np.unpackbits(np.frombuffer(carrier, dtype=np.uint8, count=byte_depth * plen)
+                                 ).reshape(plen, 8 * byte_depth)[:, 8 * byte_depth - num_lsb: 8 * byte_depth]
     return np.packbits(payload_bits).tobytes()[: num_bits // 8]
 
 
-def lsb_interleave_list(carrier, payload, num_lsb):
+def lsb_interleave_list(carrier: List[np.uint8], payload: bytes, num_lsb: int) -> List[np.uint8]:
     """Runs lsb_interleave_bytes with a List[uint8] carrier.
 
     This is slower than working with bytes directly, but is often
@@ -98,49 +89,36 @@ def lsb_interleave_list(carrier, payload, num_lsb):
     return carrier
 
 
-def lsb_deinterleave_list(carrier, num_bits, num_lsb):
+def lsb_deinterleave_list(carrier: List[np.uint8], num_bits: int, num_lsb: int) -> bytes:
     """Runs lsb_deinterleave_bytes with a List[uint8] carrier.
 
     This is slower than working with bytes directly, but is often
     unavoidable if working with libraries that require using lists."""
-
     plen = roundup(num_bits / num_lsb)
     carrier_bytes = np.array(carrier[:plen], dtype=np.uint8).tobytes()
     deinterleaved = lsb_deinterleave_bytes(carrier_bytes, num_bits, num_lsb)
     return deinterleaved
 
 
-def test(carrier_len=10 ** 7, payload_len=10 ** 6):
+def test(carrier_len: int = 10 ** 7, payload_len: int = 10 ** 6) -> bool:
     """Runs consistency tests with a random carrier and payload of byte
     lengths carrier_len and payload_len, respectively."""
 
-    def print_results(e_rates, d_rates):
+    def print_results(e_rates: List[str], d_rates: List[str]) -> None:
         print("\n" + "-" * 40)
-        row_fmt = "| {:<7}| {:<13}| {:<13}|"
-        print(row_fmt.format("# LSBs", "Encode Rate", "Decode rate"))
+        print(f"| {'# LSBs':<7}| {'Encode Rate':<13}| {'Decode rate':<13}|")
         for n, e, d in zip(range(1, 9), e_rates[1:], d_rates[1:]):
-            print(row_fmt.format(n, e, d))
+            print(f"| {n:<7}| {e:<13}| {d:<13}|")
         print("-" * 40)
 
     current_progress = 0
 
-    def progress():
+    def progress() -> None:
         nonlocal current_progress
-        print(
-            "\rProgress: ["
-            + "#" * current_progress
-            + "-" * (32 - current_progress)
-            + "]",
-            end="",
-            flush=True,
-        )
+        print(f"\rProgress: [{'#' * current_progress}{'-' * (32 - current_progress)}]", end="", flush=True)
         current_progress += 1
 
-    print(
-        "Testing {:.1f} MB payload -> {:.1f} MB carrier...".format(
-            payload_len / 1e6, carrier_len / 1e6
-        )
-    )
+    print(f"Testing {payload_len / 1e6:.1f} MB payload -> {carrier_len / 1e6:.1f} MB carrier...")
     progress()
 
     carrier = os.urandom(carrier_len)
@@ -157,27 +135,20 @@ def test(carrier_len=10 ** 7, payload_len=10 ** 6):
 
         # truncated LSB interleavings
         encode_time = time()
-        truncated_encode = lsb_interleave_bytes(
-            carrier, payload, num_lsb, truncate=True
-        )
+        truncated_encode = lsb_interleave_bytes(carrier, payload, num_lsb, truncate=True)
         encode_time = time() - encode_time
         progress()
+
         decode_time = time()
-        truncated_decode = lsb_deinterleave_bytes(
-            truncated_encode, 8 * payload_len, num_lsb
-        )
+        truncated_decode = lsb_deinterleave_bytes(truncated_encode, 8 * payload_len, num_lsb)
         decode_time = time() - decode_time
         progress()
 
-        encode_rates[num_lsb] = "{:<6.1f} MB/s".format(
-            (payload_len / 1e6) / encode_time
-        )
-        decode_rates[num_lsb] = "{:<6.1f} MB/s".format(
-            (payload_len / 1e6) / decode_time
-        )
+        encode_rates[num_lsb] = f"{(payload_len / 1e6) / encode_time:<6.1f} MB/s"
+        decode_rates[num_lsb] = f"{(payload_len / 1e6) / decode_time:<6.1f} MB/s"
 
         if decoded != payload or truncated_decode != payload:
-            print("\nTest failed at {} LSBs!".format(num_lsb))
+            print(f"\nTest failed at {num_lsb} LSBs!")
             return False
 
     print_results(encode_rates, decode_rates)
